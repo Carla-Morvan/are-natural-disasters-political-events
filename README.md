@@ -14,25 +14,19 @@ This paper provides new evidence on the role of political alignment in natural d
 ---
 
 ## Repository structure
+
+```
 repository/
-
 ├── README.md
-
 ├── data/
-
 │   └── README_data.md       # Data sources and variable descriptions
-
 └── code/
-
-├── 01_build_panels.R    # Build all analysis panels from raw data
-
-├── 02_did_period1.R     # DiD + robustness, Period 1 (2008–2014)
-
-├── 03_did_period2.R     # DiD + robustness, Period 2 (2014–2020)
-
-├── 04_heckman.R         # Heckman selection model + validity tests
-
-└── 05_descriptive.Rmd   # Descriptive statistics and figures
+    ├── 01_build_panels.R    # Build all analysis panels from raw data
+    ├── 02_did_period1.R     # DiD + robustness, Period 1 (2008-2014)
+    ├── 03_did_period2.R     # DiD + robustness, Period 2 (2014-2020)
+    ├── 04_heckman.R         # Heckman selection model + validity tests
+    └── 05_descriptive.Rmd   # Descriptive statistics and figures
+```
 
 ## How to reproduce
 
