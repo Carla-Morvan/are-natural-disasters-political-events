@@ -1,6 +1,6 @@
 # Are natural disasters political events for municipalities?
 
-**Carla Morvan** (CEE-M, Univ. Montpellier, CNRS, INRAe, Institut Agro)
+**Carla Morvan** 
 
 **Sonia Paty** (Université Lyon 2, CNRS, GATE Lyon Saint-Étienne)
 
