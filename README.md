@@ -25,7 +25,7 @@ repository/
     ├── 02_did_period1.R     # DiD + robustness, Period 1 (2008-2014)
     ├── 03_did_period2.R     # DiD + robustness, Period 2 (2014-2020)
     ├── 04_heckman.R         # Heckman selection model + validity tests
-    └── 05_descriptive.Rmd   # Descriptive statistics and figures
+    └── 05_tables_figures.Rmd   # Descriptive statistics and figures
 ```
 
 ## How to reproduce
@@ -45,7 +45,7 @@ source("code/03_did_period2.R")
 source("code/04_heckman.R")
 ```
 
-Then knit `code/05_descriptive.Rmd` for descriptive statistics and figures.
+Then knit `code/05_tables_figures.Rmd` for all tables and figures of the paper.
 
 ## Dependencies
 
