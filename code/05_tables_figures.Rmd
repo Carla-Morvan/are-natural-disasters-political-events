@@ -1,0 +1,660 @@
+---
+title: "Tables and Figures"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 7, fig.height = 5, dpi = 300)
+```
+
+```{r packages}
+library(dplyr); library(tidyr); library(ggplot2); library(scales); library(knitr)
+library(sampleSelection); library(fixest); library(texreg) ; library(stringr) ; library(tibble)
+library(car); library(boot); library(data.table); library(ggtext); library(sf); library(viridis)
+```
+
+```{r paths}
+PATH_ROOT        <- "C:/sdrive/CATNAT/couleur_catnat/REPO"
+PATH_PANEL_P1    <- file.path(PATH_ROOT, "output/panel_couleur_cat_elec_EMDAT.csv")
+PATH_PANEL_P2    <- file.path(PATH_ROOT, "output/panel_cat_elec_EMDAT.csv")
+PATH_CATNAT_RAW  <- file.path(PATH_ROOT, "raw_data/catnat_2000_2024.csv")
+PATH_GEO_COMMUNE <- file.path(PATH_ROOT, "raw_data/geo_commune_2022.shp")
+PATH_FR          <- file.path(PATH_ROOT, "raw_data/fr.shp")
+PATH_FIGURES     <- file.path(PATH_ROOT, "output/figures/")
+```
+
+```{r load-panels, cache=TRUE, results='hide', fig.show='hide', message=FALSE, warning=FALSE}
+source(file.path(PATH_ROOT, "02_did_period1.R"))
+source(file.path(PATH_ROOT, "03_did_period2.R"))
+source(file.path(PATH_ROOT, "04_heckman.R"))
+```
+
+```{r load-raw, cache=TRUE}
+catnat_raw   <- fread(PATH_CATNAT_RAW) %>% mutate(catnat = 1)
+panel_p1_raw <- read.csv(PATH_PANEL_P1)
+panel_p2_raw <- read.csv(PATH_PANEL_P2)
+```
+
+```{r load-geo, cache=TRUE}
+geo_commune <- st_read(PATH_GEO_COMMUNE, quiet = TRUE) %>% rename(cod_commune = cd_cmmn)
+fr          <- st_read(PATH_FR, quiet = TRUE)
+```
+
+---
+
+# Figure 1 -- Natural Disaster Requests and Declarations by Hazard Type
+
+```{r fig1-hist-request-declared, fig.cap="Figure 1: Natural disaster requests and declarations by hazard type"}
+data.frame(
+  Hazard = c("Sargassum Algae", "Avalanche", "Mechanical Shock from Waves",
+             "Volcanic Eruption", "Hail", "Floods and Mudslides",
+             "Floods from Rising Groundwater", "Mudflow", "Landslide",
+             "Snow Load", "Drought", "Seismic Shock", "Cyclonic Winds"),
+  Frequency_catnatF = c(3, 3, 209, 0, 26, 5676, 355, 0, 636, 12, 28390, 1467, 654),
+  Frequency_catnatT = c(0, 38, 3679, 1, 0, 35283, 456, 2, 3030, 0, 28475, 120, 57)
+) %>%
+  mutate(Group = case_when(
+    Hazard %in% c("Floods and Mudslides", "Floods from Rising Groundwater") ~ "Floods",
+    Hazard %in% c("Mechanical Shock from Waves", "Cyclonic Winds")          ~ "Storm-Related Events",
+    Hazard %in% c("Sargassum Algae", "Volcanic Eruption")                   ~ "Other",
+    Hazard %in% c("Avalanche", "Hail", "Snow Load")                         ~ "Snow events",
+    Hazard %in% c("Mudflow", "Landslide")                                   ~ "Landslide",
+    TRUE ~ Hazard
+  )) %>%
+  group_by(Group) %>%
+  summarise(Frequency_catnatF = sum(Frequency_catnatF),
+            Frequency_catnatT = sum(Frequency_catnatT), .groups = "drop") %>%
+  mutate(Percentage_T = Frequency_catnatT / (sum(Frequency_catnatT) + sum(Frequency_catnatF)) * 100,
+         Percentage_F = Frequency_catnatF / (sum(Frequency_catnatT) + sum(Frequency_catnatF)) * 100) %>%
+  pivot_longer(cols = c(Percentage_T, Percentage_F), names_to = "Type", values_to = "Percentage") %>%
+  ggplot(aes(x = reorder(Group, Percentage), y = Percentage, fill = Type)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("Percentage_F" = "orange", "Percentage_T" = "steelblue"),
+                    labels = c("Disaster Request", "Disaster Declared")) +
+  coord_flip() +
+  labs(x = "", y = "", fill = "Status") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  theme_minimal()
+```
+
+---
+  
+# Figure 2 -- Natural Disaster Declaration Rate by Municipality, 2008–2020
+  
+```{r fig2-carte-taux-reco, fig.cap="Figure 2: Declaration rate by municipality (2008-2020)"}
+baseplot_reco <- catnat_raw %>%
+  filter(year_jo > 2007, year_jo <= 2020,
+         !substr(cod_commune, 1, 2) %in% c("97", "98")) %>%
+  group_by(cod_commune) %>%
+  summarise(catnat = sum(catnat), catnat_T = sum(catnat_T), .groups = "drop") %>%
+  mutate(tx_reco = catnat_T / catnat * 100)
+
+full_join(geo_commune, baseplot_reco, by = "cod_commune") %>%
+  ggplot() +
+  geom_sf(data = fr, fill = "white", color = "black") +
+  geom_sf(aes(fill = tx_reco), color = NA) +
+  scale_fill_viridis_c(option = "D", direction = -1, na.value = "white",
+                       name = "Declaration rate (%)") +
+  theme_minimal() +
+  theme(panel.background = element_blank(), panel.border = element_blank(),
+        panel.grid = element_blank(), axis.title = element_blank(),
+        axis.text = element_blank(), axis.ticks = element_blank()) +
+  guides(fill = guide_colorbar(barwidth = 1, barheight = 10))
+```
+
+---
+  
+# Figure 3 -- Timeline of Presidential and Municipal Elections
+  
+```{r fig3-chronologie, fig.cap="Figure 3: Timeline of presidential and municipal elections", fig.width=10, fig.height=3}
+presidents <- tibble::tibble(
+  start     = c(2004, 2007, 2012, 2017),
+  end       = c(2007, 2012, 2017, 2024),
+  president = c("Chirac", "Sarkozy", "Hollande", "Macron"),
+  party     = c("right-wing", "right-wing", "left-wing", "center"),
+  color     = c("lightblue", "blue", "deeppink", "gold")
+)
+important_years <- c(2007, 2012, 2017, 2022)
+muni_years      <- c(2008, 2014, 2020)
+breaks_x        <- 2005:2023
+labels_x <- sapply(breaks_x, function(x) {
+  if (x %in% important_years) sprintf("<b>%d</b>", x)
+  else if (x %in% muni_years) sprintf("<span style='color:darkred;'>%d</span>", x)
+  else as.character(x)
+})
+
+catnat_raw %>%
+  group_by(year_cat, cat_type) %>%
+  summarise(catnat = sum(catnat), catnat_T = sum(catnat_T), .groups = "drop") %>%
+  mutate(tx_reco = catnat_T / catnat) %>%
+  ggplot(aes(x = year_cat)) +
+  geom_rect(data = presidents,
+            aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf, fill = president),
+            alpha = 0.2, inherit.aes = FALSE) +
+  geom_segment(data = tibble(x = important_years),
+               aes(x = x, xend = x, y = 0, yend = 0.85),
+               linetype = "dashed", color = "black", inherit.aes = FALSE) +
+  geom_segment(data = tibble(x = muni_years),
+               aes(x = x, xend = x, y = 0, yend = 0.85),
+               linetype = "dashed", color = "darkred", inherit.aes = FALSE) +
+  annotate("text", x = important_years, y = 0.8, label = "Presidential Election",
+           angle = 90, vjust = -0.4, hjust = 1, size = 3) +
+  annotate("text", x = muni_years, y = 0.78, label = "Municipal Election",
+           angle = 90, vjust = -0.4, hjust = 1, size = 3, color = "darkred") +
+  geom_text(data = presidents, aes(x = (start + end) / 2, y = 1.02, label = president),
+            inherit.aes = FALSE, size = 4, fontface = "bold") +
+  geom_text(data = presidents, aes(x = (start + end) / 2, y = 0.93, label = party),
+            inherit.aes = FALSE, size = 3, fontface = "bold") +
+  scale_x_continuous(breaks = breaks_x, labels = labels_x) +
+  scale_y_continuous(limits = c(0, 1.05), breaks = seq(0, 1, 0.1)) +
+  scale_fill_manual(values = setNames(presidents$color, presidents$president)) +
+  labs(x = "Year", y = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(color = "grey95"),
+        axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+        axis.text.x = element_markdown(size = 9))
+```
+
+---
+
+# Table 1 -- Effect of Political Alignment on Natural Disaster Declaration Rate (2008–2014)
+
+```{r tab1-did-p1}
+etable(p1_base, p1_ctrl_lag, p1_nopprn_lag,
+       title = "Table 1: Effect of Political Alignment on Natural Disaster Declaration Rate (2008-2014)", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table 2 -- Effect of Political Alignment on Natural Disaster Declaration Rate (2014–2020)
+  
+```{r tab2-did-p2}
+etable(p2_base, p2_ctrl_lag, p2_nopprn_lag,
+       title = "Table 2: Effect of Political Alignment on Natural Disaster Declaration Rate (2014-2020)", tex = FALSE) %>%
+  kable()
+```
+
+---
+
+# Table 3 -- Heckman Selection Models (Pooled and by Electoral Periods)
+  
+```{r tab3-heckman, results='asis'}
+htmlreg(
+  list(heck_pool, heck_2008, heck_2014, heck_2020),
+  custom.model.names = c("Pool", "2008", "2014", "2020"),
+  digits = 3, stars = c(0.001, 0.01, 0.05, 0.1),
+  include.loglik = TRUE, include.nobs = TRUE,
+  caption = "Table 3: Heckman Selection Models (Pooled and by Electoral Periods)"
+)
+```
+
+---
+  
+# Table A.1.1 -- Natural disaster by declared and request year
+  
+```{r taba11-catnat-year}
+library(kableExtra)
+catnat_raw %>%
+  filter(year_cat < 2022, year_cat > 2011) %>%
+  count(year_jo, year_cat) %>%
+  pivot_wider(names_from = year_cat, values_from = n, values_fill = 0) %>%
+  rename("JO year" = year_jo) %>%
+  kable(caption = "Table A.1.1: Natural disaster by declared and request year") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  scroll_box(width = "100%")
+```
+
+---
+  
+# Table A.1.2 -- Descriptive statistics by sample and treatment status
+  
+```{r taba12-desc-function}
+vars_did <- c("catnat", "tx_reco", "max_pluie", "diff_temp",
+              "total_pop", "p_pop_65", "totalex", "MEDREV")
+
+desc_table <- function(data, treat_var) {
+  make_block <- function(df, suffix) {
+    df %>%
+      filter(total_pop > 0) %>%
+      summarise(across(all_of(vars_did),
+                       list(mean = ~mean(.x, na.rm = TRUE),
+                            sd   = ~sd(.x,   na.rm = TRUE)),
+                       .names = paste0("{.col}z{.fn}", suffix))) %>%
+      pivot_longer(everything(), names_to = c("variable", ".value"), names_sep = "z")
+  }
+  make_block(data, "") %>%
+    full_join(make_block(data %>% filter(.data[[treat_var]] == 1), "_treat"), by = "variable") %>%
+    full_join(make_block(data %>% filter(.data[[treat_var]] == 0), "_ctrl"),  by = "variable")
+}
+```
+
+## Period 1 -- mayoral alignment
+
+```{r taba12-p1}
+kable(desc_table(did_p1, "treated"), digits = 2,
+      caption = "Table A.1.2 -- Period 1: full / treated / control")
+did_p1 %>% group_by(treated) %>%
+  summarise(n_obs = n(), n_communes = n_distinct(cod_commune)) %>%
+  kable(caption = "Sample sizes -- Period 1")
+```
+
+## Period 2 -- presidential alignment
+
+```{r taba12-p2}
+kable(desc_table(did_p2 %>% filter(!is.na(TREAT)), "TREAT"), digits = 2,
+      caption = "Table A.1.2 -- Period 2: full / treated / control")
+did_p2 %>% filter(!is.na(TREAT)) %>% group_by(TREAT) %>%
+  summarise(n_obs = n(), n_communes = n_distinct(cod_commune)) %>%
+  kable(caption = "Sample sizes -- Period 2")
+```
+
+---
+  
+# Table A.1.3 -- Descriptive statistics across samples (All, 2008, 2014, 2020)
+  
+```{r taba13-desc-heck}
+vars_heck <- c("candi_all", "reelect_all", "catnat_cycle_u", "catnat_100TRUE",
+               "fdepinv", "debt", "p_pop_65", "total_pop", "nb_candi_lists", "gender", "age")
+
+make_heck <- function(df) {
+  df %>% filter(total_pop > 0) %>% ungroup() %>%
+    summarise(across(all_of(vars_heck),
+                     list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE)),
+                     .names = "{.col}z{.fn}")) %>%
+    pivot_longer(everything(), names_to = c("variable", ".value"), names_sep = "z")
+}
+
+make_heck(panel_heck) %>%
+  full_join(make_heck(panel_heck %>% filter(an == 2008)), by = "variable", suffix = c("_pool", "_2008")) %>%
+  full_join(make_heck(panel_heck %>% filter(an == 2014)), by = "variable", suffix = c("", "_2014")) %>%
+  full_join(make_heck(panel_heck %>% filter(an == 2020)), by = "variable", suffix = c("", "_2020")) %>%
+  kable(digits = 3, caption = "Table A.1.3 -- Heckman panel: pool / 2008 / 2014 / 2020")
+```
+
+---
+  
+# Figure A.1.1 -- Meteorological exposure by political orientation
+  
+## Period 1 -- mayoral alignment (2010-2011)
+  
+```{r figa11-meteo-p1, fig.cap="Figure A.1.1: Weather distribution by mayor political orientation, 2010-2011"}
+panel_p1_raw %>%
+  filter(an %in% 2010:2011, couleur_pol %in% c("Gauche", "Droite", "Sans étiquette")) %>%
+  group_by(cod_commune, couleur_pol) %>%
+  summarise(max_pluie = max(max_pluie, na.rm = TRUE), max_t = max(t_max_max, na.rm = TRUE),
+            min_t = min(t_min_min, na.rm = TRUE), max_vent = max(vite_vent_max, na.rm = TRUE),
+            .groups = "drop") %>%
+  pivot_longer(c(max_pluie, max_t, min_t, max_vent), names_to = "variable", values_to = "value") %>%
+  mutate(pol_eng = factor(couleur_pol, levels = c("Gauche", "Droite", "Sans étiquette"),
+                          labels = c("Left-wing", "Right-wing", "Non-affiliated"))) %>%
+  ggplot(aes(x = value, fill = pol_eng)) +
+  geom_density(alpha = 0.35, color = "black", linewidth = 0.3) +
+  facet_wrap(~ variable, scales = "free",
+             labeller = as_labeller(c(max_pluie = "Maximum rainfall", max_t = "Maximum temperature",
+                                      min_t = "Minimum temperature", max_vent = "Maximum wind speed"))) +
+  scale_fill_manual(values = c("Left-wing" = "#E15759", "Right-wing" = "#4C72B0", "Non-affiliated" = "#7F8C8D")) +
+  labs(fill = "Mayor political orientation (2010-2011)", x = NULL, y = "Density") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", legend.direction = "horizontal") +
+  guides(fill = guide_legend(nrow = 1))
+```
+
+## Period 2 -- presidential vote (2014-2016)
+
+```{r figa11-meteo-p2, fig.cap="Figure A.1.1: Weather distribution by presidential first round vote, 2014-2016"}
+panel_p2_raw %>%
+  filter(an %in% 2014:2016) %>%
+  left_join(panel_p2_raw %>% filter(an == 2017) %>%
+              select(cod_commune, president_en_tete) %>% rename(COULEUR_pres = president_en_tete),
+            by = "cod_commune") %>%
+  filter(COULEUR_pres %in% c("FILLON", "LE PEN", "MACRON", "MÉLENCHON")) %>%
+  group_by(cod_commune, COULEUR_pres) %>%
+  summarise(max_pluie = max(max_pluie, na.rm = TRUE), max_t = max(t_max_max, na.rm = TRUE),
+            min_t = min(t_min_min, na.rm = TRUE), max_vent = max(vite_vent_max, na.rm = TRUE),
+            .groups = "drop") %>%
+  pivot_longer(c(max_pluie, max_t, min_t, max_vent), names_to = "variable", values_to = "value") %>%
+  mutate(pol_eng = factor(COULEUR_pres, levels = c("FILLON", "LE PEN", "MACRON", "MÉLENCHON"),
+                          labels = c("Right-wing", "Far-right", "Center", "Left-wing"))) %>%
+  ggplot(aes(x = value, fill = pol_eng)) +
+  geom_density(alpha = 0.35, color = "black", linewidth = 0.3) +
+  facet_wrap(~ variable, scales = "free",
+             labeller = as_labeller(c(max_pluie = "Maximum rainfall", max_t = "Maximum temperature",
+                                      min_t = "Minimum temperature", max_vent = "Maximum wind speed"))) +
+  scale_fill_manual(values = c("Right-wing" = "#4C72B0", "Center" = "gold",
+                               "Far-right" = "grey40", "Left-wing" = "#E15759")) +
+  labs(fill = "Presidential first round (2017)", x = NULL, y = "Density") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom", legend.direction = "horizontal") +
+  guides(fill = guide_legend(nrow = 1))
+```
+
+---
+  
+# Figure A.1.2 -- Exposure to natural disaster by political orientation
+  
+## Period 1 -- mayoral alignment (2010-2011)
+  
+```{r figa12-catnat-p1, fig.cap="Figure A.1.2: Share of municipalities with at least one disaster request, by mayor political orientation"}
+panel_p1_raw %>%
+  filter(an %in% 2010:2011) %>%
+  group_by(cod_commune, couleur_pol) %>%
+  summarise(any_catnat = as.integer(sum(catnat) > 0), .groups = "drop") %>%
+  filter(couleur_pol %in% c("Gauche", "Droite", "Sans étiquette")) %>%
+  group_by(couleur_pol) %>%
+  summarise(n = n(), p = mean(any_catnat, na.rm = TRUE),
+            se = sqrt(p * (1 - p) / n), ci_low = p - 1.96 * se, ci_high = p + 1.96 * se,
+            .groups = "drop") %>%
+  mutate(pol_eng = factor(couleur_pol, levels = c("Gauche", "Droite", "Sans étiquette"),
+                          labels = c("Left-wing", "Right-wing", "Non-affiliated"))) %>%
+  ggplot(aes(x = pol_eng, y = p, fill = pol_eng)) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = c("Left-wing" = "#E15759", "Right-wing" = "#4C72B0", "Non-affiliated" = "#7F8C8D")) +
+  labs(x = NULL, y = "Share of municipalities with \u22651 disaster request") +
+  theme_minimal(base_size = 13) + theme(legend.position = "none")
+```
+
+## Period 2 -- presidential vote (2014-2016)
+
+```{r figa12-catnat-p2, fig.cap="Figure A.1.2: Share of municipalities with at least one disaster request, by presidential vote 2017"}
+panel_p2_raw %>%
+  filter(an %in% 2014:2016) %>%
+  left_join(panel_p2_raw %>% filter(an == 2017) %>%
+              select(cod_commune, president_en_tete) %>% rename(COULEUR_pres = president_en_tete),
+            by = "cod_commune") %>%
+  group_by(cod_commune, COULEUR_pres) %>%
+  summarise(any_catnat = as.integer(sum(catnat) > 0), .groups = "drop") %>%
+  filter(COULEUR_pres %in% c("FILLON", "LE PEN", "MACRON", "MÉLENCHON")) %>%
+  group_by(COULEUR_pres) %>%
+  summarise(n = n(), p = mean(any_catnat, na.rm = TRUE),
+            se = sqrt(p * (1 - p) / n), ci_low = p - 1.96 * se, ci_high = p + 1.96 * se,
+            .groups = "drop") %>%
+  mutate(pol_eng = factor(COULEUR_pres, levels = c("FILLON", "LE PEN", "MACRON", "MÉLENCHON"),
+                          labels = c("Right-wing", "Far-right", "Center", "Left-wing"))) %>%
+  ggplot(aes(x = pol_eng, y = p, fill = pol_eng)) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = c("Right-wing" = "#4C72B0", "Center" = "gold",
+                               "Far-right" = "grey40", "Left-wing" = "#E15759")) +
+  labs(x = NULL, y = "Share of municipalities with \u22651 disaster request") +
+  theme_minimal(base_size = 13) + theme(legend.position = "none")
+```
+
+---
+  
+# Figure A.2.1 -- Event-Study
+  
+## Period 1
+```{r figa21-es-p1, fig.cap="Figure A.2.1: Event-study -- Period 1", fig.width=7, fig.height=3}
+es_df_p1 <- data.frame(
+  year      = as.numeric(gsub(".*an::(\\d+):.*", "\\1", names(coef(es_p1)))),
+  estimate  = coef(es_p1),
+  conf.low  = confint(es_p1)[, 1],
+  conf.high = confint(es_p1)[, 2],
+  term      = names(coef(es_p1))
+) %>%
+  filter(str_detect(term, "^an::"), str_detect(term, ":treated$")) %>%
+  arrange(year)
+
+wald_p1 <- wald(es_p1, keep = c("an::2009", "an::2010", "an::2011"))
+
+ggplot(es_df_p1, aes(x = year, y = estimate)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 2012, linetype = "dashed") +
+  geom_point(size = 2) +
+  annotate("point", x = 2008, y = 0, size = 2, shape = 21, fill = "white") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  labs(y = "Estimate and 95% Conf. Int.", x = "",
+       caption = paste0("Joint Wald test of pre-treatment coefficients: p-value = ",
+                        round(wald_p1$p, 3))) +
+  theme_minimal(base_size = 13) +
+  theme(plot.caption.position = "plot", plot.caption = element_text(hjust = 0))
+```
+
+## Period 2
+
+```{r figa21-es-p2, fig.cap="Figure A.2.1: Event-study -- Period 2", fig.width=7, fig.height=3}
+es_df_p2 <- data.frame(
+  year      = as.numeric(gsub(".*an::(\\d+):.*", "\\1", names(coef(es_p2)))),
+  estimate  = coef(es_p2),
+  conf.low  = confint(es_p2)[, 1],
+  conf.high = confint(es_p2)[, 2],
+  term      = names(coef(es_p2))
+) %>%
+  filter(str_detect(term, "^an::"), str_detect(term, ":TREAT$")) %>%
+  filter(year > 2014) %>%
+  arrange(year)
+
+wald_p2 <- wald(es_p2, keep = c("an::2015", "an::2016"))
+
+ggplot(es_df_p2, aes(x = year, y = estimate)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 2017, linetype = "dashed") +
+  geom_point(size = 2) +
+  annotate("point", x = 2015, y = 0, size = 2, shape = 21, fill = "white") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  labs(y = "Estimate and 95% Conf. Int.", x = "",
+       caption = paste0("Joint Wald test of pre-treatment coefficients: p-value = ",
+                        round(wald_p2$p, 3))) +
+  theme_minimal(base_size = 13) +
+  theme(plot.caption.position = "plot", plot.caption = element_text(hjust = 0))
+```
+
+---
+  
+  
+# Table A.2.1 -- Placebo Test: All left-wing Treatment Group
+  
+```{r taba21-placebo}
+etable(placebo_left1, placebo_left2, placebo_left3, placebo_left4,
+       title = "Table A.2.1: Placebo Test -- All left-wing treatment group", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.2 -- Effect of Political Alignment on Natural Disaster Request (2008–2014)
+  
+```{r taba22-demandes-p1}
+etable(p1_demande_ols, p1_demande_logit, p1_demande_probit, p1_demande_pois,
+       title = "Table A.2.2: Effect of Political Alignment on Natural Disaster Request (2008-2014)", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.3 -- Effect of Political Alignment on Natural Disaster Request (2014–2020)
+  
+```{r taba23-demandes-p2}
+etable(p2_demande_ols, p2_demande_logit, p2_demande_probit, p2_demande_pois,
+       title = "Table A.2.3: Effect of Political Alignment on Natural Disaster Request (2014-2020)", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.4 -- DiD Period 1 with lagged disaster request
+  
+```{r taba24-lag-p1}
+etable(p1_base, p1_ctrl_lag, p1_nopprn_lag,
+       title = "Table A.2.4: Effect of Political Alignment -- Period 1, control for lagged disaster request", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.5 -- DiD Period 2 with lagged disaster recognition
+  
+```{r taba25-lag-p2}
+etable(p2_base, p2_ctrl_lag, p2_nopprn_lag,
+       title = "Table A.2.5: Effect of Political Alignment -- Period 2, control for lagged disaster recognition", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.6 -- EM-DAT Robustness Period 1
+  
+```{r taba26-emdat-p1}
+etable(p1_noex, p1_noex_ctrl, p1_noex_nopprn,
+       title = "Table A.2.6: Effect of Political Alignment -- Period 1, excluding extreme events", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.7 -- EM-DAT Robustness Period 2
+  
+```{r taba27-emdat-p2}
+etable(p2_noex, p2_noex_ctrl, p2_noex_nopprn,
+       title = "Table A.2.7: Effect of Political Alignment -- Period 2, excluding extreme events", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.8 -- Effect of Deputy Alignment on Disaster Declaration Rate
+  
+```{r taba28-legis}
+etable(p1_legis1, p1_legis2, p1_legis3,
+       p2_legis1, p2_legis2, p2_legis3,
+       headers = list("Period 1 (2008-2014)" = 3, "Period 2 (2014-2020)" = 3),
+       title = "Table A.2.8: Effect of Deputy Alignment on Disaster Declaration Rate", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Tables A.2.9 & A.2.10 -- Covariate Balance Before and After Matching
+  
+```{r taba29-balance-p1}
+s_p1 <- summary(m_p1, standardize = TRUE)
+df_all <- as.data.frame(s_p1[["sum.all"]])
+df_matched <- as.data.frame(s_p1[["sum.matched"]])
+
+df_all %>%
+  tibble::rownames_to_column("variable") %>%
+  filter(variable != "distance") %>%
+  select(variable, `Means Treated`, `Means Control`, `Std. Mean Diff.`) %>%
+  left_join(
+    df_matched %>%
+      tibble::rownames_to_column("variable") %>%
+      select(variable, `Means Control`, `Std. Mean Diff.`) %>%
+      rename(`Means Control (matched)` = `Means Control`,
+             `SMD (matched)` = `Std. Mean Diff.`),
+    by = "variable"
+  ) %>%
+  kable(digits = 3,
+        caption = "Table A.2.9: Covariate Balance -- Period 1",
+        col.names = c("Variable", "Mean treated", "Mean control", "SMD",
+                      "Mean control (matched)", "SMD (matched)"))
+```
+
+```{r taba210-balance-p2}
+s_p2 <- summary(m_p2, standardize = TRUE)
+as.data.frame(summary(m_p2, standardize = TRUE)[["sum.all"]]) %>%
+  tibble::rownames_to_column("variable") %>%
+  filter(variable != "distance") %>%
+  select(variable, `Means Treated`, `Means Control`, `Std. Mean Diff.`) %>%
+  left_join(
+    as.data.frame(summary(m_p2, standardize = TRUE)[["sum.matched"]]) %>%
+      tibble::rownames_to_column("variable") %>%
+      select(variable, `Means Control`, `Std. Mean Diff.`) %>%
+      rename(`Means Control (matched)` = `Means Control`,
+             `SMD (matched)` = `Std. Mean Diff.`),
+    by = "variable"
+  ) %>%
+  kable(digits = 3,
+        caption = "Table A.2.10: Covariate Balance Before and After Matching -- Period 2",
+        col.names = c("Variable", "Mean treated", "Mean control", "SMD",
+                      "Mean control (matched)", "SMD (matched)"))
+```
+
+---
+  
+# Table A.2.11 -- Matching Period 1
+  
+```{r taba211-matching-p1}
+etable(p1_ctrl, p1_nopprn,
+       p1_m_ctrl, p1_m_nopprn,
+       headers = list("Without matching" = 2, "With matching" = 2),
+       title = "Table A.2.11: Effect of Political Alignment -- Period 1, matching", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.2.12 -- Matching Period 2
+  
+```{r taba212-matching-p2}
+etable(p2_ctrl, p2_nopprn,
+       p2_m_ctrl, p2_m_nopprn,
+       headers = list("Without matching" = 2, "With matching" = 2),
+       title = "Table A.2.12: Effect of Political Alignment -- Period 2, matching", tex = FALSE) %>%
+  kable()
+```
+
+---
+  
+# Table A.3.1 -- Heckman Selection Models (Pooled and by Electoral Periods)
+  
+```{r taba31-heck-main, results='asis'}
+htmlreg(
+  list(heck_pool, heck_2008, heck_2014, heck_2020),
+  custom.model.names = c("Pool", "2008", "2014", "2020"),
+  digits = 3, stars = c(0.001, 0.01, 0.05, 0.1),
+  include.loglik = TRUE, include.nobs = TRUE,
+  caption = "Table A.3.1: Heckman Selection Models (Pooled and by Electoral Periods)"
+)
+```
+
+---
+  
+# Table A.3.2 -- Heckman Selection Models by Municipal Population Size
+  
+```{r taba32-heck-size, results='asis'}
+htmlreg(
+  list(heck_small, heck_medium, heck_large),
+  custom.model.names = c("< 3500 hab", "3500 -- 8000" ,">8000 hab"),
+  digits = 3, stars = c(0.001, 0.01, 0.05, 0.1),
+  include.loglik = TRUE, include.nobs = TRUE,
+  caption = "Table A.3.2: Heckman Selection Models by Municipal Population Size"
+)
+```
+
+---
+  
+# Table A.3.3 -- Heckman Selection Models including political variables
+  
+```{r taba33-heck-pol, results='asis'}
+htmlreg(
+  list(heck_pool_pol, heck_2008_pol, heck_2014_pol, heck_2020_pol),
+  custom.model.names = c("Pool", "2008", "2014", "2020"),
+  digits = 3, stars = c(0.001, 0.01, 0.05, 0.1),
+  include.loglik = TRUE, include.nobs = TRUE,
+  caption = "Table A.3.3: Heckman Selection Models including political variables"
+)
+```
+
+---
+  
+# Table A.3.4 -- Probit Models on mayor reelection
+  
+```{r taba34-probit}
+etable(pooling_fe, placebo_fe, probit_2008, probit_2014, probit_2020,
+       title = "Table A.3.4: Probit Models on mayor reelection", tex = FALSE) %>%
+  kable()
+```
