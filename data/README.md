@@ -18,6 +18,7 @@
 
 ### Weather Data
 - **Source**: Météo-France, aggregated at municipality level
+- **URL**: https://donneespubliques.meteofrance.fr/
 - **Files**:
   - `meteo_commune_year_2000_2023.csv` — annual weather statistics per municipality
   - `meteo_commune_month_2000_2023.csv` — monthly weather statistics per municipality
