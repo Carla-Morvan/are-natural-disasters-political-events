@@ -11,6 +11,11 @@ This paper provides new evidence on the role of political alignment in natural d
 **Keywords:** Political alignment; natural disasters; quasi-natural experiment.
 **JEL:** D72, Q54
 
+## Results
+
+An interactive version of all tables and figures is available at:
+[Tables and Figures](https://carla-morvan.github.io/are-natural-disasters-political-events/code/05_tables_figures.html)
+
 ---
 
 ## Repository structure
